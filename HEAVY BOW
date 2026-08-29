@@ -1,0 +1,200 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+local ARROW_SPEED = 399.64
+local FOV_RADIUS = 55
+
+local aiming = false
+local target = nil
+
+local fovGui = Instance.new("ScreenGui")
+fovGui.Name = "AimFOV"
+fovGui.ResetOnSpawn = false
+fovGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local fov = Instance.new("Frame")
+fov.Size = UDim2.fromOffset(FOV_RADIUS * 2, FOV_RADIUS * 2)
+fov.Position = UDim2.fromScale(0.5, 0.5)
+fov.AnchorPoint = Vector2.new(0.5, 0.5)
+fov.BackgroundTransparency = 1
+fov.BorderSizePixel = 0
+fov.Parent = fovGui
+
+local fovCorner = Instance.new("UICorner")
+fovCorner.CornerRadius = UDim.new(1, 0)
+fovCorner.Parent = fov
+
+local playersList = {}
+
+local function updatePlayers()
+	table.clear(playersList)
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LocalPlayer then
+			table.insert(playersList, player)
+		end
+	end
+end
+
+updatePlayers()
+
+Players.PlayerAdded:Connect(function()
+	updatePlayers()
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	if target then
+		local targetPlayer = Players:GetPlayerFromCharacter(target.Parent)
+
+		if targetPlayer == player then
+			target = nil
+			aiming = false
+		end
+	end
+
+	updatePlayers()
+end)
+
+local function getTargetInFOV()
+	local screenCenter = Vector2.new(
+		Camera.ViewportSize.X / 2,
+		Camera.ViewportSize.Y / 2
+	)
+
+	local closestTarget = nil
+	local closestDistance = FOV_RADIUS
+
+	for _, player in ipairs(playersList) do
+		local character = player.Character
+
+		if character then
+			local humanoid = character:FindFirstChildOfClass("Humanoid")
+			local head = character:FindFirstChild("Head")
+
+			if humanoid and humanoid.Health > 0 and head then
+				local screenPosition, onScreen =
+					Camera:WorldToViewportPoint(head.Position)
+
+				if onScreen and screenPosition.Z > 0 then
+					local screenDistance = (
+						Vector2.new(screenPosition.X, screenPosition.Y)
+						- screenCenter
+					).Magnitude
+
+					if screenDistance <= closestDistance then
+						closestDistance = screenDistance
+						closestTarget = head
+					end
+				end
+			end
+		end
+	end
+
+	return closestTarget
+end
+
+local function validTarget()
+	if not target then
+		return false
+	end
+
+	if not target.Parent then
+		return false
+	end
+
+	if target.Name ~= "Head" then
+		return false
+	end
+
+	local character = target.Parent
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+
+	if not humanoid then
+		return false
+	end
+
+	if humanoid.Health <= 0 then
+		return false
+	end
+
+	local player = Players:GetPlayerFromCharacter(character)
+
+	if not player then
+		return false
+	end
+
+	return true
+end
+
+UserInputService.InputBegan:Connect(function(input, processed)
+	if processed then
+		return
+	end
+
+	if input.UserInputType == Enum.UserInputType.MouseButton2 then
+		target = getTargetInFOV()
+
+		if target then
+			aiming = true
+		end
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton2 then
+		aiming = false
+		target = nil
+	end
+end)
+
+local function calculatePrediction(origin, head)
+	local headPosition = head.Position
+	local headVelocity = head.AssemblyLinearVelocity
+
+	local distance = (headPosition - origin).Magnitude
+	local flightTime = distance / ARROW_SPEED
+
+	local predictedPosition =
+		headPosition + headVelocity * flightTime
+
+	return predictedPosition
+end
+
+RunService.RenderStepped:Connect(function()
+	if not aiming then
+		return
+	end
+
+	if not validTarget() then
+		target = nil
+		aiming = false
+		return
+	end
+
+	local character = LocalPlayer.Character
+
+	if not character then
+		return
+	end
+
+	local root = character:FindFirstChild("HumanoidRootPart")
+
+	if not root then
+		return
+	end
+
+	local origin = root.Position
+
+	local aimPosition =
+		calculatePrediction(origin, target)
+
+	Camera.CFrame =
+		CFrame.lookAt(
+			Camera.CFrame.Position,
+			aimPosition
+		)
+end)
